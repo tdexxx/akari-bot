@@ -231,7 +231,9 @@ async def _(msg: Bot.MessageSession, sid: str):
             sid = sid[2:]
         else:
             await msg.finish(msg.locale.t("maimai.message.id_invalid"))
+    await query_alias(msg, sid)
 
+async def query_alias(msg, sid):
     music = (await total_list.get()).by_id(sid)
     if not music:
         await msg.finish(msg.locale.t("maimai.message.music_not_found"))
@@ -244,7 +246,7 @@ async def _(msg: Bot.MessageSession, sid: str):
         await msg.finish(msg.locale.t("maimai.message.alias.alias_not_found"))
     else:
         res = [I18NContext("maimai.message.alias", title=title)]
-        res += [Plain(a) for a in alias]
+        res += [Plain(f"· {a}") for a in alias]
 
         if len(alias) >= 20:
             imgs = await msgchain2image(res, msg)
