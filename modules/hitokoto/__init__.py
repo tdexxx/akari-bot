@@ -10,7 +10,7 @@ msg_types = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"]
 hitokoto = module(
     "hitokoto",
     developers=["bugungu", "DoroWolf"],
-    desc="{hitokoto.help.desc}",
+    desc="[I18N:hitokoto.help.desc]",
     doc=True,
     alias=["htkt", "yiyan"],
     support_languages=["zh_cn", "zh_tw"],
@@ -18,7 +18,7 @@ hitokoto = module(
 
 
 @hitokoto.command()
-@hitokoto.command("[<msg_type>] {{hitokoto.help.type}}")
+@hitokoto.command("[<msg_type>] {[I18N:hitokoto.help.type]}")
 async def _(msg: Bot.MessageSession, msg_type: str = None):
     url = "https://v1.hitokoto.cn/"
     if msg_type:
@@ -41,7 +41,7 @@ async def _(msg: Bot.MessageSession, msg_type: str = None):
     tp = msg.locale.t("hitokoto.message.type") + msg.locale.t(
         "hitokoto.message.type." + data["type"]
     )
-    link = f"https://hitokoto.cn?id={data['id']}"
+    link = f"https://hitokoto.cn?id={data["id"]}"
     await msg.finish(
-        [Plain(f"{data['hitokoto']}\n——{from_who}「{data['from']}」\n{tp}"), Url(link)]
+        [Plain(f"{data["hitokoto"]}\n——{from_who}「{data["from"]}」\n{tp}"), Url(link)]
     )

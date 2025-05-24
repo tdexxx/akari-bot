@@ -4,7 +4,7 @@ from datetime import datetime
 import orjson as json
 from google_play_scraper import app as google_play_scraper
 
-from core.builtins import Bot, ErrorMessage
+from core.builtins import Bot
 from core.constants.info import Secret
 from core.logger import Logger
 from core.utils.http import get_url, post_url
@@ -34,7 +34,7 @@ async def mcjv(msg: Bot.MessageSession):
             release_time=msg.ts2strftime(time_release),
             snapshot_time=msg.ts2strftime(time_snapshot),
         )
-    except ConnectionError:  # Probably...
+    except Exception:  # Probably...
         message1 = msg.locale.t("mcv.message.mcv.launcher.failed")
     try:
         mojira = json.loads(
@@ -87,10 +87,8 @@ async def mcbv(msg: Bot.MessageSession):
                 "https://bugs.mojang.com/rest/api/2/project/10200/versions", 200
             )
         )
-    except ConnectionError:  # Probably...
-        return ErrorMessage(
-            "{mcv.message.error.server}", locale=msg.locale.locale, enable_report=False
-        )
+    except Exception:  # Probably...
+        await msg.finish(msg.locale.t("mcv.message.error.server"))
     beta = []
     preview = []
     release = []
@@ -108,13 +106,13 @@ async def mcbv(msg: Bot.MessageSession):
     return (
         (
             f"""{msg.locale.t("mcv.message.mcbv.play_store")}
-{play_store_version if play_store_version else msg.locale.t('mcv.message.mcbv.get_failed')}
+{play_store_version if play_store_version else msg.locale.t("mcv.message.mcbv.get_failed")}
 """
             if Secret.ip_country != "China"
             else ""
         )
         + f"""{msg.locale.t("mcv.message.mcbv.ms_store")}
-{ms_store_version if ms_store_version else msg.locale.t('mcv.message.mcbv.get_failed')}
+{ms_store_version if ms_store_version else msg.locale.t("mcv.message.mcbv.get_failed")}
 """
         + msg.locale.t("mcv.message.mcbv", jira_ver=msg2)
     )
@@ -127,10 +125,8 @@ async def mcdv(msg: Bot.MessageSession):
                 "https://bugs.mojang.com/rest/api/2/project/11901/versions", 200
             )
         )
-    except ConnectionError:  # Probably...
-        return ErrorMessage(
-            "{mcv.message.error.server}", locale=msg.locale.locale, enable_report=False
-        )
+    except Exception:  # Probably...
+        await msg.finish(msg.locale.t("mcv.message.error.server"))
     release = []
     for v in data:
         if not v["archived"]:
@@ -147,10 +143,8 @@ async def mcev(msg: Bot.MessageSession):
         Logger.debug(data)
         version = re.search(r"(?<=\[)(.*?)(?=])", data)[0]
         Logger.debug(version)
-    except ConnectionError:  # Probably...
-        return ErrorMessage(
-            "{mcv.message.error.server}", locale=msg.locale.locale, enable_report=False
-        )
+    except Exception:  # Probably...
+        await msg.finish(msg.locale.t("mcv.message.error.server"))
     return msg.locale.t("mcv.message.mcev", version=version)
 
 
@@ -161,10 +155,8 @@ async def mclgv(msg: Bot.MessageSession):
                 "https://bugs.mojang.com/rest/api/2/project/12200/versions", 200
             )
         )
-    except ConnectionError:  # Probably...
-        return ErrorMessage(
-            "{mcv.message.error.server}", locale=msg.locale.locale, enable_report=False
-        )
+    except Exception:  # Probably...
+        await msg.finish(msg.locale.t("mcv.message.error.server"))
     release = []
     for v in data:
         if not v["archived"]:

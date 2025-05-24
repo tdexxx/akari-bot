@@ -14,9 +14,10 @@ from core.utils.http import download
 from core.utils.image import svg_render
 from core.utils.image_table import image_table_render, ImageTable
 from core.utils.text import isint
-from .utils.dbutils import WikiTargetInfo
+from .database.models import WikiTargetInfo
 from .utils.mapping import generate_screenshot_v2_blocklist
 from .utils.screenshot_image import generate_screenshot_v1, generate_screenshot_v2
+from .utils.utils import check_svg
 from .utils.wikilib import WikiLib, PageInfo, InvalidWikiError, QueryInfo
 
 wiki = module(
@@ -35,7 +36,8 @@ wiki = module(
 
 
 @wiki.command(
-    "<pagename> [-l <lang>] {{wiki.help}}", options_desc={"-l": "{wiki.help.option.l}"}
+    "<pagename> [-l <lang>] {[I18N:wiki.help]}",
+    options_desc={"-l": "[I18N:wiki.help.option.l]"}
 )
 async def _(msg: Bot.MessageSession, pagename: str):
     get_lang = msg.parsed_msg.get("-l", False)
@@ -47,8 +49,8 @@ async def _(msg: Bot.MessageSession, pagename: str):
 
 
 @wiki.command(
-    "id <pageid> [-l <lang>] {{wiki.help.id}}",
-    options_desc={"-l": "{wiki.help.option.l}"},
+    "id <pageid> [-l <lang>] {[I18N:wiki.help.id]}",
+    options_desc={"-l": "[I18N:wiki.help.option.l]"},
 )
 async def _(msg: Bot.MessageSession, pageid: str):
     iw = None
@@ -79,13 +81,13 @@ async def query_pages(
     inline_mode: bool = False,
 ):
     if isinstance(session, MessageSession):
-        target = WikiTargetInfo(session)
-        start_wiki = target.get_start_wiki()
+        target = await WikiTargetInfo.get_by_target_id(session.target.target_id)
+        start_wiki = target.api_link
         if start_wiki_api:
             start_wiki = start_wiki_api
-        interwiki_list = target.get_interwikis()
-        headers = target.get_headers()
-        prefix = target.get_prefix()
+        interwiki_list = target.interwikis
+        headers = target.headers
+        prefix = target.prefix
     elif isinstance(session, QueryInfo):
         start_wiki = session.api
         interwiki_list = {}
@@ -149,7 +151,7 @@ async def query_pages(
                         }
                     }
                 else:
-                    raise ValueError(f'iw_prefix "{iw}" not found.')
+                    raise ValueError(f"iw_prefix \"{iw}\" not found.")
     else:
         raise ValueError("Title or pageid must be specified.")
     Logger.debug(query_task)
@@ -423,7 +425,7 @@ async def query_pages(
                             isinstance(session, Bot.MessageSession)
                             and session.Feature.wait
                         ):
-                            if not session.options.get("wiki_redlink", False):
+                            if not session.target_data.get("wiki_redlink", False):
                                 if len(r.possible_research_title) > 1:
                                     wait_plain_slice.append(
                                         session.locale.t(
@@ -611,14 +613,6 @@ async def query_pages(
                     await session.send_message(section_msg_list, quote=False)
 
         async def image_and_voice():
-            def check_svg(file_path):
-                try:
-                    with open(file_path, "r", encoding="utf-8") as file:
-                        check = file.read(1024)
-                        return "<svg" in check
-                except Exception:
-                    return False
-
             if dl_list:
                 for f in dl_list:
                     dl = await download(f)

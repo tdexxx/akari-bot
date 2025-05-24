@@ -37,15 +37,14 @@ async def _(msg: Bot.MessageSession):
     #  <<< Are you sure?
     #  >>> Yes
     #  <<< OK!
-    s = await msg.wait_confirm("Are you sure?")
-    if s:
-        await s.send_message("OK!")
+    if await msg.wait_confirm("Are you sure?"):
+        await msg.send_message("OK!")
 
 
 @test.command("image")
 async def _(msg: Bot.MessageSession):
     #  >>> ~test image
-    #  <<< A picture: Image(url='https://http.cat/100.jpg')
+    #  <<< A picture: Image(url="https://http.cat/100.jpg")
     await msg.send_message([Plain("A picture:"), Image("https://http.cat/100.jpg")])
 
 

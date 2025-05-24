@@ -7,7 +7,6 @@ from botpy.message import C2CMessage, DirectMessage, GroupMessage, Message
 from botpy.errors import ServerError
 from botpy.types.message import Reference
 
-from bots.qqbot.info import *
 from core.builtins import (
     Bot,
     Plain,
@@ -20,12 +19,14 @@ from core.builtins import (
     FinishedSession as FinishedSessionT,
 )
 from core.builtins.message.chain import MessageChain
-from core.builtins.message.elements import PlainElement, ImageElement
+from core.builtins.message.elements import PlainElement, ImageElement, MentionElement
 from core.config import Config
-from core.database import BotDBUtil
+from core.database.models import AnalyticsData, TargetInfo
 from core.logger import Logger
 from core.utils.http import download, url_pattern
 from core.utils.image import msgchain2image
+from .info import *
+
 
 enable_analytics = Config("enable_analytics", False)
 enable_send_url = Config("qq_bot_enable_send_url", False, table_name="bot_qqbot")
@@ -57,6 +58,7 @@ class MessageSession(MessageSessionT):
     class Feature:
         image = True
         voice = False
+        mention = True
         embed = False
         forward = False
         delete = True
@@ -87,6 +89,9 @@ class MessageSession(MessageSessionT):
                 plains.append(x)
             elif isinstance(x, ImageElement):
                 images.append(x)
+            elif isinstance(x, MentionElement):
+                if x.client == client_name and self.target.target_from == target_guild_prefix:
+                    plains.append(PlainElement(text=f"<@{x.id}>"))
         sends = []
         if len(plains + images) != 0:
             msg = "\n".join([x.text for x in plains]).strip()
@@ -416,8 +421,9 @@ class FetchTarget(FetchTargetT):
         target_pattern = r"|".join(re.escape(item) for item in target_prefix_list)
         match_target = re.match(rf"^({target_pattern})\|(.*)", target_id)
         if match_target:
-            target_from = sender_from = match_target.group(1)
+            target_from = match_target.group(1)
             target_id = match_target.group(2)
+            sender_from = None
             if sender_id:
                 sender_pattern = r"|".join(
                     re.escape(item) for item in sender_prefix_list
@@ -426,10 +432,9 @@ class FetchTarget(FetchTargetT):
                 if match_sender:
                     sender_from = match_sender.group(1)
                     sender_id = match_sender.group(2)
-            else:
-                sender_id = target_id
-
-            return Bot.FetchedSession(target_from, target_id, sender_from, sender_id)
+            session = Bot.FetchedSession(target_from, target_id, sender_from, sender_id)
+            await session.parent.data_init()
+            return session
 
     @staticmethod
     async def fetch_target_list(target_list) -> List[Bot.FetchedSession]:
@@ -449,39 +454,41 @@ class FetchTarget(FetchTargetT):
                     msgchain = message
                     if isinstance(message, str):
                         if i18n:
-                            msgchain = MessageChain(
-                                [Plain(x.parent.locale.t(message, **kwargs))]
-                            )
+                            msgchain = MessageChain([I18NContext(message, **kwargs)])
                         else:
                             msgchain = MessageChain([Plain(message)])
                     msgchain = MessageChain(msgchain)
                     await x.send_direct_message(msgchain)
                     if enable_analytics and module_name:
-                        BotDBUtil.Analytics(x).add("", module_name, "schedule")
+                        await AnalyticsData.create(target_id=x.target.target_id,
+                                                   sender_id=x.target.sender_id,
+                                                   command="",
+                                                   module_name=module_name,
+                                                   module_type="schedule")
                 except Exception:
                     Logger.error(traceback.format_exc())
         else:
-            get_target_id = BotDBUtil.TargetInfo.get_target_list(
-                module_name, client_name
-            )
+            get_target_id = await TargetInfo.get_target_list_by_module(module_name, client_name)
             for x in get_target_id:
-                fetch = await FetchTarget.fetch_target(x.targetId)
+                fetch = await FetchTarget.fetch_target(x.target_id)
                 if fetch:
-                    if BotDBUtil.TargetInfo(fetch.target.target_id).is_muted:
+                    if x.muted:
                         continue
                     try:
                         msgchain = message
                         if isinstance(message, str):
                             if i18n:
-                                msgchain = MessageChain(
-                                    [Plain(fetch.parent.locale.t(message, **kwargs))]
-                                )
+                                msgchain = MessageChain(I18NContext(message, **kwargs))
                             else:
-                                msgchain = MessageChain([Plain(message)])
+                                msgchain = MessageChain(Plain(message))
                         msgchain = MessageChain(msgchain)
                         await fetch.send_direct_message(msgchain)
                         if enable_analytics and module_name:
-                            BotDBUtil.Analytics(fetch).add("", module_name, "schedule")
+                            await AnalyticsData.create(target_id=fetch.target.target_id,
+                                                       sender_id=fetch.target.sender_id,
+                                                       command="",
+                                                       module_name=module_name,
+                                                       module_type="schedule")
                     except Exception:
                         Logger.error(traceback.format_exc())
 

@@ -19,7 +19,7 @@ def clear_cd_list():
                 if "timestamp" in sender_data and (now - sender_data["timestamp"] >= sender_data["delay"]):
                     del target_data[sender]
                     continue
-
+            elif isinstance(sender_data, str):
                 for cd in list(sender_data.keys()):
                     cd_data = sender_data[cd]
 
@@ -65,7 +65,7 @@ class CoolDown:
         :return: 剩余的冷却时间。
         """
         if self.target_id not in _cd_lst:
-            self.reset()
+            self._get_cd_dict()
             return 0
         target_dict = _cd_lst[self.target_id]
         if self.whole_target:

@@ -3,12 +3,11 @@ import os
 import re
 import sys
 import traceback
-from typing import Dict, Union, Callable
-
-import orjson as json
+from typing import Dict, Optional, Union, Callable
 
 from core.config import Config
 from core.constants.path import modules_path, PrivateAssets
+from core.i18n import locale_loaded_err
 from core.logger import Logger
 from core.types import Module
 from core.types.module.component_meta import (
@@ -17,8 +16,8 @@ from core.types.module.component_meta import (
     ScheduleMeta,
     HookMeta,
 )
-from core.utils.i18n import locale_loaded_err
 from core.utils.info import Info
+from core.utils.loader import fetch_modules_list
 
 all_modules = []
 current_unloaded_modules = []
@@ -32,19 +31,7 @@ def load_modules():
         err_prompt.append("i18n:")
         err_prompt.append("\n".join(locale_loaded_err))
     fun_file = None
-    if not Info.binary_mode:
-        dir_list = os.listdir(modules_path)
-    else:
-        try:
-            Logger.warning(
-                "Binary mode detected, trying to load pre-built modules list..."
-            )
-            js = "assets/modules_list.json"
-            with open(js, "r", encoding="utf-8") as f:
-                dir_list = json.loads(f.read())
-        except Exception:
-            Logger.error("Failed to load pre-built modules list, using default list.")
-            dir_list = os.listdir(modules_path)
+    dir_list = fetch_modules_list()
 
     Logger.info("Attempting to load modules...")
 
@@ -106,7 +93,7 @@ class ModulesManager:
             cls.modules.update({module.bind_prefix: module})
             cls.modules_origin.update({module.bind_prefix: py_module_name})
         else:
-            raise ValueError(f'Duplicate bind prefix "{module.bind_prefix}"')
+            raise ValueError(f"Duplicate bind prefix \"{module.bind_prefix}\"")
 
     @classmethod
     def remove_modules(cls, modules):
@@ -116,7 +103,7 @@ class ModulesManager:
                 cls.modules.pop(module)
                 cls.modules_origin.pop(module)
             else:
-                raise ValueError(f'Module "{module}" is not exist.')
+                raise ValueError(f"Module \"{module}\" is not exist.")
 
     @classmethod
     def refresh_modules_aliases(cls):
@@ -155,7 +142,7 @@ class ModulesManager:
             if not include_self:
                 modules.remove(module)
             return modules
-        raise ValueError(f'Could not find "{module}" in modules_origin dict')
+        raise ValueError(f"Could not find \"{module}\" in modules_origin dict")
 
     @classmethod
     def return_py_module(cls, module):
@@ -184,22 +171,27 @@ class ModulesManager:
     _return_cache = {}
 
     @classmethod
-    def return_modules_list(cls, target_from: str = None) -> Dict[str, Module]:
+    def return_modules_list(cls, target_from: Optional[str] = None) -> Dict[str, Module]:
         modules = {
             bind_prefix: cls.modules[bind_prefix] for bind_prefix in sorted(cls.modules)
         }
         if target_from:
+            if "|" in target_from:
+                client_name = target_from.split("|")[0]
+            else:
+                client_name = target_from
             if target_from in cls._return_cache:
                 return cls._return_cache[target_from]
             returns = {}
             for m in modules:
                 if isinstance(modules[m], Module):
+                    available = modules[m].available_for
+                    exclude = modules[m].exclude_from
                     if not modules[m].load:
                         continue
-                    if target_from in modules[m].exclude_from:
+                    if target_from in exclude or client_name in exclude:
                         continue
-                    available = modules[m].available_for
-                    if target_from in available or "*" in available:
+                    if target_from in available or client_name in available or "*" in available:
                         returns.update({m: modules[m]})
             cls._return_cache.update({target_from: returns})
             return returns
@@ -274,7 +266,7 @@ class ModulesManager:
             ) in err_modules:
                 err_modules.remove(m.group(1))
             return cnt + 1
-        except BaseException:
+        except Exception:
             tb = traceback.format_exc()
             errmsg = f"Failed to reload {module_name}: \n{tb}"
             Logger.error(errmsg)

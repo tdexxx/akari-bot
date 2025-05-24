@@ -6,10 +6,6 @@ from uuid import uuid4
 
 import nio
 
-from bots.matrix import client
-from bots.matrix.client import bot
-from bots.matrix.info import *
-from bots.matrix.message import MessageSession, FetchTarget
 from core.bot_init import load_prompt, init_async
 from core.builtins import PrivateAssets
 from core.config import Config
@@ -17,8 +13,13 @@ from core.constants.default import ignored_sender_default
 from core.constants.path import assets_path
 from core.logger import Logger
 from core.parser.message import parser
+from core.terminate import cleanup_sessions
 from core.types import MsgInfo, Session
 from core.utils.info import Info
+from . import client
+from .client import bot
+from .info import *
+from .message import MessageSession, FetchTarget
 
 PrivateAssets.set(os.path.join(assets_path, "private", "matrix"))
 ignored_sender = Config("ignored_sender", ignored_sender_default)
@@ -41,11 +42,11 @@ async def on_room_member(room: nio.MatrixRoom, event: nio.RoomMemberEvent):
     Logger.info(
         f"Received m.room.member, {event.sender}: {event.prev_membership} -> {event.membership}"
     )
-    # is_direct = (room.member_count == 1 or room.member_count == 2) and room.join_rule == 'invite'
+    # is_direct = (room.member_count == 1 or room.member_count == 2) and room.join_rule == "invite"
     # if not is_direct:
-    #     resp = await bot.room_get_state_event(room.room_id, 'm.room.member', client.user)
-    #     if 'prev_content' in resp.__dict__ and 'is_direct' in resp.__dict__[
-    #             'prev_content'] and resp.__dict__['prev_content']['is_direct']:
+    #     resp = await bot.room_get_state_event(room.room_id, "m.room.member", client.user)
+    #     if "prev_content" in resp.__dict__ and "is_direct" in resp.__dict__[
+    #             "prev_content"] and resp.__dict__["prev_content"]["is_direct"]:
     #         is_direct = True
     if room.member_count == 1 and event.membership == "leave":
         resp = await bot.room_leave(room.room_id)
@@ -96,7 +97,7 @@ async def on_message(room: nio.MatrixRoom, event: nio.RoomMessageFormatted):
             sender_id=sender_id,
             target_from=target_prefix,
             sender_from=sender_prefix,
-            sender_prefix=resp.displayname,
+            sender_name=resp.displayname,
             client_name=client_name,
             message_id=event.event_id,
             reply_id=reply_id,
@@ -223,7 +224,7 @@ async def start():
 
     # sync joined room state
     Logger.info("Starting sync room full state...")
-    # bot.upload_filter(presence={'limit':1},room={'timeline':{'limit':1}})
+    # bot.upload_filter(presence={"limit":1},room={"timeline":{"limit":1}})
     resp = await bot.sync(
         timeout=10000, since=bot.next_batch, full_state=True, set_presence="unavailable"
     )
@@ -261,7 +262,11 @@ async def start():
 
 
 if bot and Config("enable", False, table_name="bot_matrix"):
-    Info.client_name = client_name
-    if "subprocess" in sys.argv:
-        Info.subprocess = True
-    asyncio.run(start())
+    loop = asyncio.new_event_loop()
+    try:
+        Info.client_name = client_name
+        if "subprocess" in sys.argv:
+            Info.subprocess = True
+        loop.run_until_complete(start())
+    except (KeyboardInterrupt, SystemExit):
+        loop.run_until_complete(cleanup_sessions())

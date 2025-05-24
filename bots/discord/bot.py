@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import os
 import re
@@ -7,25 +8,26 @@ import traceback
 import discord
 import orjson as json
 
-from bots.discord.client import client
-from bots.discord.info import *
-from bots.discord.message import MessageSession, FetchTarget
 from core.bot_init import init_async, load_prompt
 from core.builtins import PrivateAssets
+from core.builtins.utils import command_prefix
 from core.config import Config
 from core.constants.default import ignored_sender_default
 from core.constants.path import assets_path
 from core.logger import Logger
 from core.parser.message import parser
+from core.terminate import cleanup_sessions
 from core.types import MsgInfo, Session
 from core.utils.info import Info
+from .client import client
+from .info import *
+from .message import MessageSession, FetchTarget
 
 PrivateAssets.set(os.path.join(assets_path, "private", "discord"))
+dc_token = Config("discord_token", cfg_type=str, secret=True, table_name="bot_discord")
 ignored_sender = Config("ignored_sender", ignored_sender_default)
 
 count = 0
-
-dc_token = Config("discord_token", cfg_type=str, secret=True, table_name="bot_discord")
 
 
 @client.event
@@ -80,7 +82,7 @@ def load_slashcommands():
                 modules = "bots.discord.slash." + fun_file
                 importlib.import_module(modules)
                 Logger.success(f"Succeeded loaded bots.discord.slash.{fun_file}!")
-        except BaseException:
+        except Exception:
             tb = traceback.format_exc()
             errmsg = f"Failed to load bots.discord.slash.{fun_file}: \n{tb}"
             Logger.error(errmsg)
@@ -101,20 +103,26 @@ async def on_message(message):
     sender_id = f"{sender_prefix}|{message.author.id}"
     if sender_id in ignored_sender:
         return
+
     reply_id = None
     if message.reference:
         reply_id = message.reference.message_id
+
     prefix = None
     if match_at := re.match(r"^<@(.*?)>", message.content):
         if match_at.group(1) == str(client.user.id):
-            prefix = [""]
             message.content = re.sub(r"<@(.*?)>", "", message.content)
+            if message.content in ["", " "]:
+                message.content = f"{command_prefix[0]}help"
+                prefix = command_prefix
+        else:
+            return
 
     msg = MessageSession(
         target=MsgInfo(
             target_id=target_id,
             sender_id=sender_id,
-            sender_prefix=message.author.name,
+            sender_name=message.author.name,
             target_from=target_from,
             sender_from=sender_prefix,
             client_name=client_name,
@@ -127,8 +135,11 @@ async def on_message(message):
 
 
 if Config("enable", False, table_name="bot_discord"):
-    Info.client_name = client_name
-    if "subprocess" in sys.argv:
-        Info.subprocess = True
-
-    client.run(dc_token)
+    loop = asyncio.new_event_loop()
+    try:
+        Info.client_name = client_name
+        if "subprocess" in sys.argv:
+            Info.subprocess = True
+        loop.run_until_complete(client.start(dc_token))
+    except (KeyboardInterrupt, SystemExit):
+        loop.run_until_complete(cleanup_sessions())

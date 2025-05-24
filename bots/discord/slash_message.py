@@ -2,17 +2,17 @@ import traceback
 
 import discord
 
-from bots.discord.message import (
-    convert_embed,
-    MessageSession as MessageSessionT,
-    FinishedSession as FinS,
-)
 from core.builtins import MessageTaskManager
 from core.builtins.message.chain import MessageChain
 from core.builtins.message.elements import PlainElement, ImageElement, EmbedElement
 from core.builtins.message.internal import I18NContext
 from core.config import Config
 from core.logger import Logger
+from .message import (
+    convert_embed,
+    MessageSession as MessageSessionT,
+    FinishedSession as FinS,
+)
 
 enable_analytics = Config("enable_analytics", False)
 
@@ -35,6 +35,7 @@ class MessageSession(MessageSessionT):
     class Feature:
         image = True
         voice = False
+        mention = True
         embed = True
         forward = False
         delete = True
@@ -79,7 +80,7 @@ class MessageSession(MessageSessionT):
                     f"[Bot] -> [{self.target.target_id}]: Image: {str(x.__dict__)}"
                 )
             elif isinstance(x, EmbedElement):
-                embeds, _ = await convert_embed(x)
+                embeds, _ = await convert_embed(x, self)
                 if first_send:
                     send_ = await self.session.message.respond(embed=embeds)
                 else:

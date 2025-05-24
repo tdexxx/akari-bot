@@ -14,20 +14,20 @@ from core.builtins.message.elements import (
     MessageElement,
     PlainElement,
     EmbedElement,
-    ErrorMessageElement,
     FormattedTimeElement,
     I18NContextElement,
     URLElement,
     ImageElement,
     VoiceElement,
+    MentionElement,
 )
 
 if TYPE_CHECKING:
     from core.builtins.message import MessageSession
 
 from core.builtins.utils import Secret
+from core.joke import shuffle_joke as joke
 from core.logger import Logger
-
 from core.utils.http import url_pattern
 
 from cattrs import structure, unstructure
@@ -62,7 +62,7 @@ class MessageChain:
         if isinstance(elements, MessageElement):
             if isinstance(elements, PlainElement):
                 if elements.text != "":
-                    elements = match_kecode(elements.text)
+                    elements = match_kecode(elements.text, elements.disable_joke)
             else:
                 elements = [elements]
         if isinstance(elements, dict):
@@ -82,7 +82,7 @@ class MessageChain:
                             tmp_e = structure(e[key], elements_map[key])
                             if isinstance(tmp_e, PlainElement):
                                 if tmp_e.text != "":
-                                    self.value += match_kecode(tmp_e.text)
+                                    self.value += match_kecode(tmp_e.text, tmp_e.disable_joke)
                             else:
                                 self.value.append(tmp_e)
                         else:
@@ -91,7 +91,7 @@ class MessageChain:
                 elif isinstance(e, PlainElement):
                     if isinstance(e, PlainElement):
                         if e.text != "":
-                            self.value += match_kecode(e.text)
+                            self.value += match_kecode(e.text, e.disable_joke)
 
                 elif isinstance(e, MessageElement):
                     self.value.append(e)
@@ -111,7 +111,7 @@ class MessageChain:
         """
 
         def unsafeprompt(name, secret, text):
-            return f'{name} contains unsafe text "{secret}": {text}'
+            return f"{name} contains unsafe text \"{secret}\": {text}"
 
         for v in self.value:
             if isinstance(v, PlainElement):
@@ -168,49 +168,17 @@ class MessageChain:
         """
         将消息链转换为可发送的格式。
         """
-        locale = None
-        if msg:
-            locale = msg.locale.locale
         value = []
         for x in self.value:
             if isinstance(x, EmbedElement) and not embed:
                 value += x.to_message_chain(msg)
             elif isinstance(x, PlainElement):
-                if x.text != "":
-                    if msg:
-                        pattern = r'\[i18n:([^\s,]+)(?:,([^\]]+))?\]'
-                        matches = re.findall(pattern, x.text)
-
-                        for match in matches:
-                            key = html.unescape(match[0])
-                            kwargs = {}
-
-                            if match[1]:
-                                params = match[1].split(',')
-                                for param in params:
-                                    k, v = param.split('=')
-                                    kwargs[html.unescape(k)] = html.unescape(v)
-
-                            t_value = msg.locale.t(key, **kwargs)
-                            if isinstance(t_value, str):
-                                x.text = x.text.replace(
-                                    f"[i18n:{
-                                        match[0]}{
-                                        ',' +
-                                        match[1] if match[1] else ''}]",
-                                    t_value)
-
-                    value.append(x)
-                else:
-                    value.append(
-                        PlainElement.assign(
-                            str(
-                                ErrorMessageElement.assign(
-                                    "{error.message.chain.plain.empty}", locale=locale
-                                )
-                            )
-                        )
-                    )
+                if msg:
+                    if x.text != "":
+                        x.text = msg.locale.t_str(x.text)
+                    else:
+                        x = PlainElement.assign(msg.locale.t("error.message.chain.plain.empty"))
+                value.append(x)
             elif isinstance(x, FormattedTimeElement):
                 x = x.to_str(msg=msg)
                 if value and isinstance(value[-1], PlainElement):
@@ -220,27 +188,25 @@ class MessageChain:
                 else:
                     value.append(PlainElement.assign(x))
             elif isinstance(x, I18NContextElement):
+                for k, v in x.kwargs.items():
+                    if isinstance(v, str):
+                        x.kwargs[k] = msg.locale.t_str(v)
                 t_value = msg.locale.t(x.key, **x.kwargs)
                 if isinstance(t_value, str):
-                    value.append(PlainElement.assign(t_value))
+                    value.append(PlainElement.assign(t_value, disable_joke=x.disable_joke))
                 else:
                     value += MessageChain(t_value).as_sendable(msg)
             elif isinstance(x, URLElement):
                 value.append(PlainElement.assign(x.url, disable_joke=True))
-            elif isinstance(x, ErrorMessageElement):
-                value.append(PlainElement.assign(str(x)))
             else:
                 value.append(x)
         if not value:
-            value.append(
-                PlainElement.assign(
-                    str(
-                        ErrorMessageElement.assign(
-                            "{error.message.chain.plain.empty}", locale=locale
-                        )
-                    )
-                )
-            )
+            if msg:
+                value.append(PlainElement.assign(msg.locale.t("error.message.chain.plain.empty")))
+        for x in value:
+            if isinstance(x, PlainElement) and not x.disable_joke:
+                x.text = joke(x.text)
+
         return value
 
     def to_list(self) -> list[dict[str, Any]]:
@@ -287,7 +253,7 @@ class MessageChain:
         return MessageChain(self.value.copy())
 
     def __str__(self):
-        return f'[{", ".join([x.__repr__() for x in self.value])}]'
+        return f"[{", ".join([x.__repr__() for x in self.value])}]"
 
     def __repr__(self):
         return self.__str__()
@@ -301,7 +267,7 @@ class MessageChain:
         if isinstance(other, list):
             return MessageChain(self.value + other)
         raise TypeError(
-            f"Unsupported operand type(s) for +: 'MessageChain' and '{type(other).__name__}'"
+            f"Unsupported operand type(s) for +: \"MessageChain\" and \"{type(other).__name__}\""
         )
 
     def __radd__(self, other):
@@ -310,7 +276,7 @@ class MessageChain:
         if isinstance(other, list):
             return MessageChain(other + self.value)
         raise TypeError(
-            f"Unsupported operand type(s) for +: '{type(other).__name__}' and 'MessageChain'"
+            f"Unsupported operand type(s) for +: \"{type(other).__name__}\" and \"MessageChain\""
         )
 
     def __iadd__(self, other):
@@ -320,42 +286,48 @@ class MessageChain:
             self.value += other
         else:
             raise TypeError(
-                f"Unsupported operand type(s) for +=: 'MessageChain' and '{type(other).__name__}'"
+                f"Unsupported operand type(s) for +=: \"MessageChain\" and \"{type(other).__name__}\""
             )
         return self
 
 
-def match_kecode(text: str) -> List[Union[PlainElement, ImageElement, VoiceElement, I18NContextElement]]:
+def match_kecode(text: str,
+                 disable_joke: bool = False) -> List[Union[PlainElement,
+                                                           ImageElement,
+                                                           VoiceElement,
+                                                           I18NContextElement]]:
     split_all = re.split(r"(\[Ke:.*?])", text)
     split_all = [x for x in split_all if x]
     elements = []
+    params = []
 
     for e in split_all:
-        match = re.match(r"\[Ke:(.*?),(.*)]", e)
+        match = re.match(r"\[Ke:([^\s,\]]+)(?:,([^\]]+))?\]", e)
         if not match:
             if e != "":
-                elements.append(PlainElement.assign(e))
+                elements.append(PlainElement.assign(e, disable_joke=disable_joke))
         else:
             element_type = match.group(1).lower()
-            args = re.split(r",|,.\s", match.group(2))
 
-            args = [x for x in args if x]
+            if match.group(2):
+                params = match.group(2).split(",")
+                params = [x for x in params if x]
 
             if element_type == "plain":
-                for a in args:
+                for a in params:
                     ma = re.match(r"(.*?)=(.*)", a)
                     if ma:
                         if ma.group(1) == "text":
                             ua = html.unescape(ma.group(2))
-                            elements.append(PlainElement.assign(ua))
+                            elements.append(PlainElement.assign(ua, disable_joke=disable_joke))
                         else:
                             a = html.unescape(a)
-                            elements.append(PlainElement.assign(a))
+                            elements.append(PlainElement.assign(a, disable_joke=disable_joke))
                     else:
                         a = html.unescape(a)
-                        elements.append(PlainElement.assign(a))
+                        elements.append(PlainElement.assign(a, disable_joke=disable_joke))
             elif element_type == "image":
-                for a in args:
+                for a in params:
                     ma = re.match(r"(.*?)=(.*)", a)
                     if ma:
                         img = None
@@ -374,7 +346,7 @@ def match_kecode(text: str) -> List[Union[PlainElement, ImageElement, VoiceEleme
                         a = html.unescape(a)
                         elements.append(ImageElement.assign(a))
             elif element_type == "voice":
-                for a in args:
+                for a in params:
                     ma = re.match(r"(.*?)=(.*)", a)
                     if ma:
                         if ma.group(1) == "path":
@@ -390,7 +362,7 @@ def match_kecode(text: str) -> List[Union[PlainElement, ImageElement, VoiceEleme
             elif element_type == "i18n":
                 i18nkey = None
                 kwargs = {}
-                for a in args:
+                for a in params:
                     ma = re.match(r"(.*?)=(.*)", a)
                     if ma:
                         if ma.group(1) == "i18nkey":
@@ -398,7 +370,20 @@ def match_kecode(text: str) -> List[Union[PlainElement, ImageElement, VoiceEleme
                         else:
                             kwargs[ma.group(1)] = html.unescape(ma.group(2))
                 if i18nkey:
-                    elements.append(I18NContextElement.assign(i18nkey, **kwargs))
+                    elements.append(I18NContextElement.assign(i18nkey, disable_joke, **kwargs))
+            elif element_type == "mention":
+                for a in params:
+                    ma = re.match(r"(.*?)=(.*)", a)
+                    if ma:
+                        if ma.group(1) == "userid":
+                            ua = html.unescape(ma.group(2))
+                            elements.append(MentionElement.assign(ua))
+                        else:
+                            a = html.unescape(a)
+                            elements.append(MentionElement.assign(a))
+                    else:
+                        a = html.unescape(a)
+                        elements.append(MentionElement.assign(a))
 
     return elements
 

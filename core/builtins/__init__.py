@@ -2,17 +2,18 @@ import asyncio
 from typing import Any, Dict, List, Optional, Union
 
 from core.config import Config
+from core.constants import base_superuser_default
 from core.constants.info import Info
-from core.exports import exports
+from core.database.models import TargetInfo
+from core.exports import add_export
 from core.loader import ModulesManager
+from core.logger import Logger
 from core.types.message import MsgInfo, Session, ModuleHookContext
 from .message import *
 from .message.chain import *
 from .message.internal import *
 from .temp import *
 from .utils import *
-from ..constants import base_superuser_default
-from ..logger import Logger
 
 
 class Bot:
@@ -35,8 +36,6 @@ class Bot:
     ):
         if isinstance(target, str):
             target = await Bot.FetchTarget.fetch_target(target)
-            if not target:
-                raise ValueError("Target not found")
         if isinstance(msg, list):
             msg = MessageChain(msg)
         Logger.info(target.__dict__)
@@ -53,10 +52,10 @@ class Bot:
 
     @staticmethod
     async def get_enabled_this_module(module: str) -> List[FetchedSession]:
-        lst = exports.get("BotDBUtil").TargetInfo.get_target_list(module)
+        lst = await TargetInfo.get_target_list_by_module(module)
         fetched = []
         for x in lst:
-            x = Bot.FetchTarget.fetch_target(x)
+            x = Bot.FetchTarget.fetch_target(x.target_id)
             if isinstance(x, FetchedSession):
                 fetched.append(x)
         return fetched
@@ -94,28 +93,29 @@ class FetchedSession(FetchedSession):
         self,
         target_from: str,
         target_id: Union[int, str],
-        sender_from: Optional[str] = None,
-        sender_id: Optional[Union[int, str]] = None,
+        sender_from: Optional[str],
+        sender_id: Optional[Union[str, int]],
     ):
-        if not sender_from:
-            sender_from = target_from
-        if not sender_id:
-            sender_id = target_id
+        target_id_ = f"{target_from}|{target_id}"
+        sender_id_ = None
+        if sender_from and sender_id:
+            sender_id_ = f"{sender_from}|{sender_id}"
         self.target = MsgInfo(
-            target_id=f"{target_from}|{target_id}",
-            sender_id=f"{sender_from}|{sender_id}",
+            target_id=target_id_,
+            sender_id=sender_id_,
             target_from=target_from,
             sender_from=sender_from,
-            sender_prefix="",
+            sender_name="",
             client_name=Bot.client_name,
             message_id=0,
         )
         self.session = Session(message=False, target=target_id, sender=sender_id)
         self.parent = Bot.MessageSession(self.target, self.session)
-        if sender_id:
-            self.parent.target.sender_id = exports.get("BotDBUtil").SenderInfo(
-                f"{sender_from}|{sender_id}"
-            )
+
+#        if sender_id:
+#            self.parent.target.sender_id = exports.get("BotDBUtil").SenderInfo(
+#                f"{sender_from}|{sender_id}"
+#            )
 
 
 Bot.FetchedSession = FetchedSession
@@ -142,3 +142,6 @@ base_superuser_list = Config(
 
 if isinstance(base_superuser_list, str):
     base_superuser_list = [base_superuser_list]
+
+
+add_export(Bot)

@@ -6,8 +6,6 @@ import httpx
 import orjson as json
 from khl import MessageTypes, Message
 
-from bots.kook.client import bot
-from bots.kook.info import *
 from core.builtins import (
     Bot,
     Plain,
@@ -15,20 +13,24 @@ from core.builtins import (
     Voice,
     MessageSession as MessageSessionT,
     I18NContext,
+    Mention,
     MessageTaskManager,
     FetchTarget as FetchTargetT,
     FinishedSession as FinishedSessionT,
 )
 from core.builtins.message.chain import MessageChain
-from core.builtins.message.elements import PlainElement, ImageElement, VoiceElement
+from core.builtins.message.elements import MentionElement, PlainElement, ImageElement, VoiceElement
 from core.config import Config
-from core.database import BotDBUtil
+from core.database.models import AnalyticsData, TargetInfo
 from core.logger import Logger
+from .client import bot
+from .info import *
 
 enable_analytics = Config("enable_analytics", False)
 kook_base = "https://www.kookapp.cn"
+kook_token = Config("kook_token", cfg_type=str, secret=True, table_name="bot_kook")
 kook_headers = {
-    "Authorization": f"Bot {Config('kook_token', cfg_type=str, secret=True, table_name='bot_kook')}"
+    "Authorization": f"Bot {kook_token}"
 }
 
 
@@ -67,6 +69,7 @@ class MessageSession(MessageSessionT):
     class Feature:
         image = True
         voice = True
+        mention = True
         embed = False
         forward = False
         delete = True
@@ -132,7 +135,19 @@ class MessageSession(MessageSessionT):
                 )
                 send.append(send_)
                 count += 1
-
+            elif isinstance(x, MentionElement):
+                if x.client == client_name and self.target.target_from == target_group_prefix:
+                    send_ = await self.session.message.reply(
+                        f"(met){x.id}(met)",
+                        quote=(
+                            quote if quote and count == 0 and self.session.message else None
+                        ),
+                    )
+                    Logger.info(
+                        f"[Bot] -> [{self.target.target_id}]: Mention: {sender_prefix}|{str(x.id)}"
+                    )
+                    send.append(send_)
+                    count += 1
         msg_ids = []
         for x in send:
             msg_ids.append(x["msg_id"])
@@ -178,6 +193,10 @@ class MessageSession(MessageSessionT):
             lst.append(Image(self.session.message.content))
         elif self.session.message.type == MessageTypes.AUDIO:
             lst.append(Voice(self.session.message.content))
+        elif self.session.message.type == MessageTypes.KMD:
+            match = re.match(r"\(met\)(.*?)\(met\)", self.session.message.content)
+            if match.group(1):
+                lst.append(Mention(f"{target_person_prefix}|{str(match.group(1))}"))
         return MessageChain(lst)
 
     async def delete(self):
@@ -202,7 +221,7 @@ class MessageSession(MessageSessionT):
             self.msg = msg
 
         async def __aenter__(self):
-            # await bot.answer_chat_action(self.msg.session.target, 'typing')
+            # await bot.answer_chat_action(self.msg.session.target, "typing")
             pass
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -263,8 +282,9 @@ class FetchTarget(FetchTargetT):
         target_pattern = r"|".join(re.escape(item) for item in target_prefix_list)
         match_target = re.match(rf"^({target_pattern})\|(.*)", target_id)
         if match_target:
-            target_from = sender_from = match_target.group(1)
+            target_from = match_target.group(1)
             target_id = match_target.group(2)
+            sender_from = None
             if sender_id:
                 sender_pattern = r"|".join(
                     re.escape(item) for item in sender_prefix_list
@@ -273,10 +293,9 @@ class FetchTarget(FetchTargetT):
                 if match_sender:
                     sender_from = match_sender.group(1)
                     sender_id = match_sender.group(2)
-            else:
-                sender_id = target_id
-
-            return Bot.FetchedSession(target_from, target_id, sender_from, sender_id)
+            session = Bot.FetchedSession(target_from, target_id, sender_from, sender_id)
+            await session.parent.data_init()
+            return session
 
     @staticmethod
     async def fetch_target_list(target_list: list) -> List[Bot.FetchedSession]:
@@ -296,39 +315,43 @@ class FetchTarget(FetchTargetT):
                     msgchain = message
                     if isinstance(message, str):
                         if i18n:
-                            msgchain = MessageChain(
-                                [Plain(x.parent.locale.t(message, **kwargs))]
-                            )
+                            msgchain = MessageChain([I18NContext(message, **kwargs)])
                         else:
                             msgchain = MessageChain([Plain(message)])
                     msgchain = MessageChain(msgchain)
                     await x.send_direct_message(msgchain)
                     if enable_analytics and module_name:
-                        BotDBUtil.Analytics(x).add("", module_name, "schedule")
+                        await AnalyticsData.create(target_id=x.target.target_id,
+                                                   sender_id=x.target.sender_id,
+                                                   command="",
+                                                   module_name=module_name,
+                                                   module_type="schedule")
                 except Exception:
                     Logger.error(traceback.format_exc())
         else:
-            get_target_id = BotDBUtil.TargetInfo.get_target_list(
+            get_target_id = await TargetInfo.get_target_list_by_module(
                 module_name, client_name
             )
             for x in get_target_id:
-                fetch = await FetchTarget.fetch_target(x.targetId)
+                fetch = await FetchTarget.fetch_target(x.target_id)
                 if fetch:
-                    if BotDBUtil.TargetInfo(fetch.target.target_id).is_muted:
+                    if x.muted:
                         continue
                     try:
                         msgchain = message
                         if isinstance(message, str):
                             if i18n:
-                                msgchain = MessageChain(
-                                    [Plain(fetch.parent.locale.t(message, **kwargs))]
-                                )
+                                msgchain = MessageChain([I18NContext(message, **kwargs)])
                             else:
                                 msgchain = MessageChain([Plain(message)])
                         msgchain = MessageChain(msgchain)
                         await fetch.send_direct_message(msgchain)
                         if enable_analytics and module_name:
-                            BotDBUtil.Analytics(fetch).add("", module_name, "schedule")
+                            await AnalyticsData.create(target_id=fetch.target.target_id,
+                                                       sender_id=fetch.target.sender_id,
+                                                       command="",
+                                                       module_name=module_name,
+                                                       module_type="schedule")
                     except Exception:
                         Logger.error(traceback.format_exc())
 

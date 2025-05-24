@@ -1,11 +1,9 @@
+import asyncio
 import os
 import sys
 
 from khl import Message, MessageTypes
 
-from bots.kook.client import bot
-from bots.kook.info import *
-from bots.kook.message import MessageSession, FetchTarget
 from core.bot_init import load_prompt, init_async
 from core.builtins import PrivateAssets
 from core.config import Config
@@ -13,7 +11,11 @@ from core.constants.default import ignored_sender_default
 from core.constants.info import Info
 from core.constants.path import assets_path
 from core.parser.message import parser
+from core.terminate import cleanup_sessions
 from core.types import MsgInfo, Session
+from .client import bot
+from .info import *
+from .message import MessageSession, FetchTarget
 
 PrivateAssets.set(os.path.join(assets_path, "private", "kook"))
 Info.dirty_word_check = Config("enable_dirty_check", False)
@@ -31,6 +33,7 @@ async def msg_handler(message: Message):
     sender_id = f"{sender_prefix}|{message.author_id}"
     if sender_id in ignored_sender:
         return
+
     reply_id = None
     if "quote" in message.extra:
         reply_id = message.extra["quote"]["rong_id"]
@@ -43,7 +46,7 @@ async def msg_handler(message: Message):
             sender_id=sender_id,
             target_from=target,
             sender_from=sender_prefix,
-            sender_prefix=message.author.nickname,
+            sender_name=message.author.nickname,
             client_name=client_name,
             message_id=message.id,
             reply_id=reply_id,
@@ -60,8 +63,12 @@ async def _(b: bot):
 
 
 if Config("enable", False, table_name="bot_kook"):
-    Info.client_name = client_name
-    if "subprocess" in sys.argv:
-        Info.subprocess = True
+    loop = asyncio.get_event_loop()
+    try:
+        Info.client_name = client_name
+        if "subprocess" in sys.argv:
+            Info.subprocess = True
 
-    bot.run()
+        loop.run_until_complete(bot.start())
+    except (KeyboardInterrupt, SystemExit):
+        loop.run_until_complete(cleanup_sessions())

@@ -1,46 +1,46 @@
 import orjson as json
 
-from core.builtins import Bot
+from core.builtins import Bot, I18NContext, Plain
 from core.component import module
 from core.dirty_check import check
 from core.logger import Logger
 from core.utils.http import post_url
 
 n = module("nbnhhsh",
-           desc="{nbnhhsh.help.desc}",
+           desc="[I18N:nbnhhsh.help.desc]",
            doc=True,
            developers=["Dianliang233"],
            support_languages=["zh_cn"]
            )
 
 
-@n.command("<term> {{nbnhhsh.help}}")
+@n.command("<term> {[I18N:nbnhhsh.help]}")
 async def _(msg: Bot.MessageSession, term: str):
-    res_nbnhhsh = await nbnhhsh(msg, term)
-    chk = await check(res_nbnhhsh)
-    res = f"{term.lower()}\n"
-    for i in chk:
-        res += i["content"]
-    await msg.finish(res.strip())
+    res = await nbnhhsh(msg, term)
+    await msg.finish([Plain(term.lower()), res])
 
 
 async def nbnhhsh(msg: Bot.MessageSession, term: str):
-    req = json.dumps({'text': term})
-    data = await post_url('https://lab.magiconch.com/api/nbnhhsh/guess',
+    req = json.dumps({"text": term})
+    data = await post_url("https://lab.magiconch.com/api/nbnhhsh/guess",
                           data=req,
-                          headers={'Content-Type': 'application/json', 'Accept': '*/*',
-                                   'Content-Length': str(len(req))},
-                          fmt='json')
+                          headers={"Content-Type": "application/json",
+                                   "Accept": "*/*",
+                                   "Content-Length": str(len(req))},
+                          fmt="json")
     Logger.debug(data)
     try:
         result = data[0]
     except IndexError:
-        await msg.finish(msg.locale.t("nbnhhsh.message.not_found"))
-    if 'trans' in result:
-        trans = result['trans']
-        return "、".join(trans)
-    if 'inputting' in result:
-        inputting = result['inputting']
+        await msg.finish(I18NContext("nbnhhsh.message.not_found"))
+    if "trans" in result:
+        trans = result["trans"]
+        if trans:
+            chk = await check(trans)
+            return Plain("、".join(i["content"] for i in chk))
+    if "inputting" in result:
+        inputting = result["inputting"]
         if inputting:
-            return f'{msg.locale.t("nbnhhsh.message.guess", term=term)}{"、".join(inputting)}'
-        await msg.finish(msg.locale.t("nbnhhsh.message.not_found"))
+            chk = await check(inputting)
+            return I18NContext("nbnhhsh.message.guess", term="、".join(i["content"] for i in chk))
+        await msg.finish(I18NContext("nbnhhsh.message.not_found"))
